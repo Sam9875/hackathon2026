@@ -43,6 +43,47 @@ An end-to-end tool that allows a procurement user to **search in natural languag
 
 ---
 
+## 🕷️ ScrapeGraphAI Architecture
+
+The project's enrichment pipeline leverages [**ScrapeGraphAI**](https://github.com/ScrapeGraphAI/Scrapegraph-ai) — an open-source Python library that uses **LLMs + graph-based logic** to create intelligent, adaptive scraping pipelines.
+
+### How It Works
+
+Unlike traditional scrapers that rely on brittle CSS selectors and XPath, ScrapeGraphAI uses a **modular graph architecture** where each node performs a specific task, orchestrated by an LLM that understands content semantically:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    ScrapeGraphAI Pipeline                          │
+│                                                                     │
+│  ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐     │
+│  │  INPUT    │──▶ │  FETCH   │──▶ │   LLM    │──▶ │  OUTPUT  │     │
+│  │  Node     │    │  Node    │    │  Parse   │    │  Node    │     │
+│  │          │    │          │    │  Node    │    │          │     │
+│  │ URL /    │    │ HTTP /   │    │ GPT /    │    │ JSON /   │     │
+│  │ Prompt   │    │ Browser  │    │ Gemini / │    │ CSV /    │     │
+│  │          │    │ Render   │    │ Ollama   │    │ DB       │     │
+│  └──────────┘    └──────────┘    └──────────┘    └──────────┘     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Graph-Based Pipeline Types
+
+| Graph Type | Use Case |
+|-----------|----------|
+| **SmartScraperGraph** | Single-page extraction via natural language prompt |
+| **SmartScraperMultiGraph** | Multi-page scraping from a list of URLs |
+| **SearchGraph** | Extract data from search engine results |
+| **SmartCrawler** | AI-powered full-site crawling with depth control |
+| **ScriptCreatorGraph** | Generates reusable Python scraping scripts |
+
+### Key Advantages Over Traditional Scraping
+
+- **Semantic understanding** — The LLM interprets page content by meaning, not by HTML structure
+- **Self-adapting** — When website layouts change, the LLM adapts without code changes
+- **Natural language prompts** — Define what to extract in plain English (e.g. *"Extract company name, revenue, and certifications"*)
+- **Multi-LLM support** — Works with GPT, Gemini, Groq, Hugging Face, and local models via Ollama
+- **Structured output** — Automatically formats extracted data as JSON for direct database insertion
+
 ## 📊 Data Per Supplier
 
 | Category | Attributes |
