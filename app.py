@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from search.engine import SearchEngine
 
 st.set_page_config(
-    page_title="Supplier Intelligence Engine",
+    page_title="AI Supplier Discovery",
     page_icon="🔍",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -67,7 +67,7 @@ def get_engine():
 engine = get_engine()
 
 # ── Header ──
-st.markdown('<div class="main-header">Supplier Intelligence</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">AI Supplier Discovery</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-header">AI-powered supplier discovery · Natural language search with semantic matching across European manufacturing</div>', unsafe_allow_html=True)
 
 # ── Stats ──
