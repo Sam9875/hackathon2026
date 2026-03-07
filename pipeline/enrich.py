@@ -32,10 +32,10 @@ Return ONLY this information. If something is not found, leave it blank or omit 
 """
 
 graph_config = {
-    # Using the ScrapeGraphAI API provider
+    # Using standard OpenAI to power ScrapeGraph since the SGAI API is throwing 403s
     "llm": {
-        "api_key": SGAI_API_KEY,
-        "model": "scrapegraphai/gpt-4o-mini",  # Using their hosted fast model
+        "api_key": os.getenv("OPENAI_API_KEY"),
+        "model": "openai/gpt-4o-mini",
     },
     "verbose": False,
     "headless": True,
