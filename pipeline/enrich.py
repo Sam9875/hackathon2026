@@ -1,76 +1,60 @@
 """
-enrich.py — Second-pass enrichment for the supplier database.
+enrich.py — Second-pass enrichment using ScrapeGraphAI
 
 This script:
-1. Reads suppliers with websites from the database
-2. Attempts to fetch meta descriptions from their homepages
-3. Updates product_description with richer content
-4. Fills in missing product_keywords from meta tags
+1. Reads suppliers with websites from the SQLite database
+2. Uses ScrapeGraphAI (SmartScraperGraph) to semantically parse their homepage
+3. Extracts precise product offerings, industries, and certifications
+4. Updates the database with this high-quality structured data
 """
 
 import sqlite3
 import os
-import re
+import json
 import logging
-import requests
-from urllib.parse import urlparse
+from scrapegraphai.graphs import SmartScraperGraph
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
 DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'suppliers.db')
 
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    'Accept': 'text/html',
+# Ensure the user has provided their ScrapeGraph API key
+SGAI_API_KEY = os.getenv("SCRAPEGRAPHAI_API_KEY")
+
+prompt = """
+Extract the following information about this manufacturing company:
+1. 'main_products': A concise list of the exact products or machinery they manufacture.
+2. 'industries_served': A list of industries they sell to (e.g. automotive, food, packaging).
+3. 'certifications': Any ISO, IATF, HACCP or other quality standards mentioned.
+4. 'contact_email': The primary contact or sales email address if found.
+
+Return ONLY this information. If something is not found, leave it blank or omit the key.
+"""
+
+graph_config = {
+    # Using the ScrapeGraphAI API provider
+    "llm": {
+        "api_key": SGAI_API_KEY,
+        "model": "scrapegraphai/gpt-4o-mini",  # Using their hosted fast model
+    },
+    "verbose": False,
+    "headless": True,
 }
 
-
-def extract_meta(html: str) -> dict:
-    """Extract title and meta description from raw HTML."""
-    result = {}
-
-    # Title
-    title_match = re.search(r'<title[^>]*>(.*?)</title>', html, re.IGNORECASE | re.DOTALL)
-    if title_match:
-        result['title'] = title_match.group(1).strip()[:500]
-
-    # Meta description
-    desc_match = re.search(
-        r'<meta[^>]*name=["\']description["\'][^>]*content=["\'](.*?)["\']',
-        html, re.IGNORECASE | re.DOTALL
-    )
-    if not desc_match:
-        desc_match = re.search(
-            r'<meta[^>]*content=["\'](.*?)["\'][^>]*name=["\']description["\']',
-            html, re.IGNORECASE | re.DOTALL
-        )
-    if desc_match:
-        result['description'] = desc_match.group(1).strip()[:1000]
-
-    # Meta keywords
-    kw_match = re.search(
-        r'<meta[^>]*name=["\']keywords["\'][^>]*content=["\'](.*?)["\']',
-        html, re.IGNORECASE | re.DOTALL
-    )
-    if not kw_match:
-        kw_match = re.search(
-            r'<meta[^>]*content=["\'](.*?)["\'][^>]*name=["\']keywords["\']',
-            html, re.IGNORECASE | re.DOTALL
-        )
-    if kw_match:
-        result['keywords'] = kw_match.group(1).strip()[:500]
-
-    return result
-
-
-def enrich_suppliers(max_enrich=200):
+def enrich_suppliers(max_enrich=20):
     """Enrich up to max_enrich suppliers that have websites."""
+    if not SGAI_API_KEY:
+        logging.error("SCRAPEGRAPHAI_API_KEY environment variable is missing!")
+        logging.error("Export it first: set SCRAPEGRAPHAI_API_KEY=your_key")
+        return
+
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
 
+    # Pick suppliers that have a website but haven't been heavily enriched yet
     cursor.execute("""
-        SELECT id, website, product_description, product_keywords
+        SELECT id, company_name, website, product_description, certifications, contact_email
         FROM suppliers
         WHERE website IS NOT NULL AND website != ''
         ORDER BY RANDOM()
@@ -78,43 +62,78 @@ def enrich_suppliers(max_enrich=200):
     """, (max_enrich,))
 
     rows = cursor.fetchall()
-    logging.info(f"Enrichment pass: processing {len(rows)} suppliers with websites...")
+    logging.info(f"ScrapeGraphAI Enrichment: processing {len(rows)} suppliers...")
 
     enriched = 0
     for row in rows:
         sid = row['id']
         url = row['website']
+        company = row['company_name']
+        
+        logging.info(f"🕷️ Scraping: {company} ({url})")
         
         try:
-            resp = requests.get(url, headers=HEADERS, timeout=5, allow_redirects=True)
-            if resp.status_code != 200:
-                continue
-
-            meta = extract_meta(resp.text[:50000])  # Only parse first 50KB
+            # Create and run the ScrapeGraphAI graph
+            smart_scraper = SmartScraperGraph(
+                prompt=prompt,
+                source=url,
+                config=graph_config
+            )
             
+            result = smart_scraper.run()
+            
+            if not result:
+                continue
+                
             updates = {}
             
-            if 'description' in meta:
-                existing = row['product_description'] or ''
-                if len(meta['description']) > len(existing):
-                    updates['product_description'] = f"{meta['description']}. {existing}"
+            # 1. Products & Industries -> product_description + product_categories
+            prods = result.get('main_products', [])
+            inds = result.get('industries_served', [])
             
-            if 'keywords' in meta and not row['product_keywords']:
-                updates['product_keywords'] = meta['keywords']
+            if prods:
+                prod_str = ", ".join(prods) if isinstance(prods, list) else str(prods)
+                updates['product_description'] = f"Manufactures: {prod_str}."
+            
+            if inds:
+                ind_str = ", ".join(inds) if isinstance(inds, list) else str(inds)
+                updates['product_categories'] = ind_str
+
+            # 2. Certifications
+            certs = result.get('certifications', [])
+            if certs:
+                cert_str = ", ".join(certs) if isinstance(certs, list) else str(certs)
+                existing_certs = row['certifications'] or ''
+                # Only update if we found new ones
+                if len(cert_str) > len(existing_certs):
+                    updates['certifications'] = cert_str
+                    
+            # 3. Email
+            email = result.get('contact_email')
+            if email and not row['contact_email']:
+                if isinstance(email, list) and email:
+                    updates['contact_email'] = email[0]
+                elif isinstance(email, str):
+                    updates['contact_email'] = email
 
             if updates:
                 set_clause = ', '.join(f"{k} = ?" for k in updates.keys())
                 values = list(updates.values()) + [sid]
                 cursor.execute(f"UPDATE suppliers SET {set_clause} WHERE id = ?", values)
+                conn.commit()
                 enriched += 1
+                logging.info(f"  ✓ Extracted: {updates}")
+            else:
+                logging.info("  - No new data extracted.")
 
-        except Exception:
-            continue  # Skip failed enrichments silently
+        except Exception as e:
+            logging.error(f"  ✗ Failed to scrape {company}: {e}")
+            continue
 
-    conn.commit()
     conn.close()
-    logging.info(f"Enrichment complete. Updated {enriched} suppliers with richer descriptions.")
+    logging.info(f"Enrichment complete. Updated {enriched}/{len(rows)} suppliers.")
 
 
 if __name__ == '__main__':
-    enrich_suppliers(max_enrich=200)
+    # Start small to test the API credits
+    enrich_suppliers(max_enrich=10)
